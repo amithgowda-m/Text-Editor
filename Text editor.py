@@ -19,9 +19,16 @@ lib.init()
 
 root = tk.Tk()
 root.title("Text Editor")
+root.geometry("800x600")
 
-text = tk.Text(root, width=80, height=25)
-text.pack()
+frame = tk.Frame(root)
+frame.pack(fill = tk.BOTH, expand = True, padx = 10, pady = 10)
+text = tk.Text(frame, wrap = tk.WORD)
+text.pack(expand = True, fill = tk.BOTH, side = tk.LEFT)
+scrollbar = tk.Scrollbar(frame, command = text.yview)
+scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+text.config(yscrollcommand=scrollbar.set)
+
 
 # Save current state to undo stack
 def save_state():
