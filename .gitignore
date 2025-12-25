@@ -1,0 +1,24 @@
+# --- C/C++ Compiled Files ---
+*.o
+*.obj
+*.dll
+*.dylib
+*.so
+*.exe
+*.a
+*.lib
+*.out
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+
+# --- IDE/Editor Settings ---
+.vscode/
+.idea/
+*.swp
+
+# --- OS Generated Files ---
+.DS_Store
+Thumbs.db
