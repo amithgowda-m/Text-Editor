@@ -61,6 +61,8 @@ char* pop(Stack* s) {
 
 #ifdef _WIN32
 #define EXPORT __declspec(dllexport)
+#elif __APPLE__
+#define EXPORT __attribute__((visibility("default")))
 #else
 #define EXPORT
 #endif
