@@ -81,6 +81,9 @@ class AdvancedText(tk.Frame):
         self.text.bind('<Button-1>', self.on_click)
         self.text.bind('<MouseWheel>', self.sync_wheel)
 
+        self.autocomplete_list = None
+        self.autocomplete_popup = None
+
         self.save_timer = None
 
     def sync_scroll(self, *args):
@@ -109,7 +112,7 @@ class AdvancedText(tk.Frame):
     def on_change(self, event=None):
         self.update_line_numbers()
         self.show_autocomplete()
-        
+
         if self.save_timer:
             self.after_cancel(self.save_timer)
         self.save_timer = self.after(500, self.push_state_to_c)
@@ -136,15 +139,78 @@ class AdvancedText(tk.Frame):
 
     def show_autocomplete(self):
         prefix = self.get_current_word()
+
         if len(prefix) < 2:
+            self.hide_autocomplete()
             return
 
         suggestions = ((c_char * 64) * 5)()
         count = backend.lib.autocomplete(prefix.encode(), suggestions)
 
-        if count > 0:
-            words = [suggestions[i].value.decode() for i in range(count)]
-            self.master.status_var.set("Suggestions: " + ", ".join(words))
+        if count == 0:
+            self.hide_autocomplete()
+            return
+
+        # Create popup if needed
+        if not self.autocomplete_popup:
+            self.autocomplete_popup = tk.Toplevel(self)
+            self.autocomplete_popup.wm_overrideredirect(True)
+            self.autocomplete_popup.attributes("-topmost", True)
+
+            self.autocomplete_list = tk.Listbox(
+                self.autocomplete_popup,
+                height=5,
+                width=25
+            )
+            self.autocomplete_list.pack()
+            self.autocomplete_list.bind("<ButtonRelease-1>", self.apply_suggestion)
+            self.autocomplete_list.bind("<Return>", self.apply_suggestion)
+
+        self.autocomplete_list.delete(0, tk.END)
+        for i in range(count):
+            self.autocomplete_list.insert(
+                tk.END,
+                suggestions[i].value.decode()
+            )
+
+        # Calculate screen coordinates 
+        bbox = self.text.bbox(tk.INSERT)
+        if not bbox:
+            return
+
+        x, y, w, h = bbox
+        abs_x = self.text.winfo_rootx() + x
+        abs_y = self.text.winfo_rooty() + y + h
+
+        self.autocomplete_popup.geometry(f"+{abs_x}+{abs_y}")
+    
+    def hide_autocomplete(self):
+        if self.autocomplete_popup:
+            self.autocomplete_popup.destroy()
+            self.autocomplete_popup = None
+            self.autocomplete_list = None
+    
+    def apply_suggestion(self, event=None):
+        if not self.autocomplete_list.curselection():
+            return
+
+        selected = self.autocomplete_list.get(
+            self.autocomplete_list.curselection()
+        )
+
+        start = self.text.search(
+            r'\m\w+$',
+            tk.INSERT,
+            backwards=True,
+            regexp=True
+        )
+
+        if start:
+            self.text.delete(start, tk.INSERT)
+            self.text.insert(start, selected)
+
+        self.hide_autocomplete()
+
 
 
 class ResearchEditor(tk.Tk):

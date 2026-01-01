@@ -100,7 +100,7 @@ void read_and_insert_into_trie(const char *filename) {
         return;
     }
 
-    char word[50];
+    char word[MAX_WORD_LEN];
     while (fgets(word, sizeof(word), file)) {
         // Remove the newline character at the end of the word, if any
         word[strcspn(word, "\n")] = '\0';
