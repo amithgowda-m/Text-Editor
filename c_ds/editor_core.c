@@ -1,8 +1,19 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <ctype.h>
 
 #define MAX_HISTORY 200 //this is to perform undo operation just 200 stack 
+#define ALPHABET_SIZE 26
+#define MAX_WORD_LEN 64
+#define MAX_SUGGESTIONS 5
+
+typedef struct TrieNode {
+    struct TrieNode* children[ALPHABET_SIZE];
+    int is_end;
+} TrieNode;
+
+static TrieNode* root = NULL;
 
 
 typedef struct {
@@ -25,7 +36,6 @@ void clearStack(Stack* s) {
         s->top--;
     }
 }
-
 
 void push(Stack* s, const char* text) {
     if (!text) return;
@@ -58,6 +68,54 @@ char* pop(Stack* s) {
 }
 
 
+// Trie Operations
+TrieNode* create_node() {
+    TrieNode* node = (TrieNode*)calloc(1, sizeof(TrieNode));
+    return node;
+}
+
+void trie_init() {
+    root = create_node();
+}
+
+void trie_insert(const char* word) {
+    TrieNode* curr = root;
+    for (int i = 0; word[i]; i++) {
+        char c = tolower(word[i]);
+        if (c < 'a' || c > 'z') return;
+
+        int idx = c - 'a';
+        if (!curr->children[idx])
+            curr->children[idx] = create_node();
+
+        curr = curr->children[idx];
+    }
+    curr->is_end = 1;
+}
+
+void dfs_collect(
+    TrieNode* node,
+    char* buffer,
+    int depth,
+    char suggestions[MAX_SUGGESTIONS][MAX_WORD_LEN],
+    int* count
+) {
+    if (*count >= MAX_SUGGESTIONS) return;
+
+    if (node->is_end) {
+        buffer[depth] = '\0';
+        strcpy(suggestions[*count], buffer);
+        (*count)++;
+    }
+
+    for (int i = 0; i < ALPHABET_SIZE; i++) {
+        if (node->children[i]) {
+            buffer[depth] = 'a' + i;
+            dfs_collect(node->children[i], buffer, depth + 1, suggestions, count);
+        }
+    }
+}
+
 
 #ifdef _WIN32
 #define EXPORT __declspec(dllexport)
@@ -72,6 +130,7 @@ char* pop(Stack* s) {
 EXPORT void init() {
     initStack(&undoStack);
     initStack(&redoStack);
+    trie_init();
 }
 
 EXPORT void push_undo_state(const char* text) {
@@ -108,4 +167,28 @@ EXPORT void save_file(const char* filename, const char* text) {
 
 EXPORT void free_mem(char* ptr) {
     if (ptr) free(ptr);
+}
+
+EXPORT int autocomplete(
+    const char* prefix,
+    char suggestions[MAX_SUGGESTIONS][MAX_WORD_LEN]
+) {
+    TrieNode* curr = root;
+    char buffer[MAX_WORD_LEN];
+    int depth = 0;
+
+    for (int i = 0; prefix[i]; i++) {
+        char c = tolower(prefix[i]);
+        if (c < 'a' || c > 'z') return 0;
+
+        int idx = c - 'a';
+        if (!curr->children[idx]) return 0;
+
+        buffer[depth++] = c;
+        curr = curr->children[idx];
+    }
+
+    int count = 0;
+    dfs_collect(curr, buffer, depth, suggestions, &count);
+    return count;
 }

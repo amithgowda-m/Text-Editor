@@ -41,6 +41,12 @@ class BackendManager:
             self.lib.perform_redo.restype = c_char_p
             self.lib.save_file.argtypes = [c_char_p, c_char_p]
             self.lib.free_mem.argtypes = [c_void_p]
+            self.lib.autocomplete.argtypes = [
+                c_char_p,
+                (c_char * 64) * 5
+            ]
+            self.lib.autocomplete.restype = c_int
+
         except Exception as e:
             messagebox.showerror("Linker Error", f"Failed to load C functions: {e}")
             exit(1)
@@ -102,6 +108,7 @@ class AdvancedText(tk.Frame):
 
     def on_change(self, event=None):
         self.update_line_numbers()
+        self.show_autocomplete()
         
         if self.save_timer:
             self.after_cancel(self.save_timer)
@@ -111,6 +118,33 @@ class AdvancedText(tk.Frame):
        
         content = self.text.get("1.0", tk.END).encode('utf-8')
         backend.lib.push_undo_state(content)
+
+    def get_current_word(self):
+        index = self.text.index(tk.INSERT)
+        start = self.text.search(r'\m\w+$', index, backwards=True, regexp=True)
+        if not start:
+            return ""
+        return self.text.get(start, index)
+
+    def get_previous_word_range(self):
+        index = self.text.index(tk.INSERT)
+        start = self.text.search(r'\m\w+\M\s*$', index, backwards=True, regexp=True)
+        if not start:
+            return None
+        end = self.text.index(f"{start} wordend")
+        return start, end
+
+    def show_autocomplete(self):
+        prefix = self.get_current_word()
+        if len(prefix) < 2:
+            return
+
+        suggestions = ((c_char * 64) * 5)()
+        count = backend.lib.autocomplete(prefix.encode(), suggestions)
+
+        if count > 0:
+            words = [suggestions[i].value.decode() for i in range(count)]
+            self.master.status_var.set("Suggestions: " + ", ".join(words))
 
 
 class ResearchEditor(tk.Tk):
