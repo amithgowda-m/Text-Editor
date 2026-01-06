@@ -35,10 +35,11 @@ class BackendManager:
             self.lib.init()
        
             self.lib.push_undo_state.argtypes = [c_char_p]
-            self.lib.perform_undo.argtypes = [c_char_p]
-            self.lib.perform_undo.restype = c_char_p 
-            self.lib.perform_redo.argtypes = [c_char_p]
-            self.lib.perform_redo.restype = c_char_p
+            self.lib.perform_undo.argtypes = [c_char_p, c_char_p]
+            self.lib.perform_undo.restype = c_int
+            self.lib.perform_redo.argtypes = [c_char_p, c_char_p]
+            self.lib.perform_redo.restype = c_int
+
             self.lib.save_file.argtypes = [c_char_p, c_char_p]
             self.lib.free_mem.argtypes = [c_void_p]
             self.lib.autocomplete.argtypes = [
@@ -83,8 +84,8 @@ class AdvancedText(tk.Frame):
 
         self.autocomplete_list = None
         self.autocomplete_popup = None
-
         self.save_timer = None
+        self.is_restoring = False
 
     def sync_scroll(self, *args):
         self.text.yview(*args)
@@ -110,16 +111,19 @@ class AdvancedText(tk.Frame):
         self.update_line_numbers()
 
     def on_change(self, event=None):
+        if self.is_restoring:
+            return
+        
         self.update_line_numbers()
         self.show_autocomplete()
 
         if self.save_timer:
             self.after_cancel(self.save_timer)
-        self.save_timer = self.after(500, self.push_state_to_c)
+        self.save_timer = self.after(300, self.push_state_to_c)
 
     def push_state_to_c(self):
        
-        content = self.text.get("1.0", tk.END).encode('utf-8')
+        content = self.text.get("1.0", "end-1c").encode('utf-8')
         backend.lib.push_undo_state(content)
 
     def get_current_word(self):
@@ -143,7 +147,7 @@ class AdvancedText(tk.Frame):
 
     def show_autocomplete(self):
         prefix = self.get_current_word()
-        print("ENTER show_autocomplete", prefix)
+        #print("ENTER show_autocomplete", prefix)
 
         if len(prefix) < 2:
             self.hide_autocomplete()
@@ -151,15 +155,15 @@ class AdvancedText(tk.Frame):
 
         suggestions = ((c_char * 64) * 5)()
         count = backend.lib.autocomplete(prefix.encode(), suggestions)
-        print("Count:", count)
-        for suggestion in suggestions:
-            print("Suggestion:", suggestion.value.decode())
+        #print("Count:", count)
+    #    for suggestion in suggestions:
+    #        print("Suggestion:", suggestion.value.decode())
 
         if count == 0:
             self.hide_autocomplete()
             return
 
-        print("PREFIX:", repr(prefix))
+        #print("PREFIX:", repr(prefix))
 
         # Create popup if needed
         if not self.autocomplete_popup:
@@ -358,58 +362,42 @@ class ResearchEditor(tk.Tk):
 
     def edit_undo(self, event=None):
         editor = self.get_active_editor()
-        if not editor: return
+        if not editor:
+            return "break"
 
-        current_text = editor.get("1.0", tk.END).encode('utf-8')
-        
-        # Call perform_undo and get the result pointer
-        result_ptr = backend.lib.perform_undo(current_text)
-        
-        if result_ptr:
-            try:
-                # Decode the result text from C memory and insert it into the editor
-                prev_text = cast(result_ptr, c_char_p).value.decode('utf-8')
-                
-                # Replace the current content with the previous undo state
-                editor.delete("1.0", tk.END)
-                editor.insert("1.0", prev_text.rstrip('\n'))  # Remove extra newlines
-                
-                # Free the memory used by the C function
-                backend.lib.free_mem(result_ptr)
-                
-                self.status_var.set("Undo successful.")
-            except Exception as e:
-                print(f"Undo Error: {e}")
+        current = editor.get("1.0", tk.END).encode()
+        buffer = create_string_buffer(5000)
+
+        editor.master.is_restoring = True
+
+        if backend.lib.perform_undo(current, buffer):
+            editor.delete("1.0", tk.END)
+            editor.insert("1.0", buffer.value.decode())
+            editor.mark_set(tk.INSERT, "end-1c")
+            self.status_var.set("Undo")
         else:
-            self.status_var.set("Nothing to undo.")
+            self.status_var.set("Nothing to undo")
+
+        editor.master.is_restoring = False
+
         return "break"
 
     def edit_redo(self, event=None):
         editor = self.get_active_editor()
-        if not editor: return
+        if not editor:
+            return "break"
 
-        current_text = editor.get("1.0", tk.END).encode('utf-8')
-        
-        # Call perform_redo and get the result pointer
-        result_ptr = backend.lib.perform_redo(current_text)
+        current = editor.get("1.0", tk.END).encode()
+        buffer = create_string_buffer(5000)
 
-        if result_ptr:
-            try:
-                # Decode the result text from C memory and insert it into the editor
-                next_text = cast(result_ptr, c_char_p).value.decode('utf-8')
-                
-                # Replace the current content with the next redo state
-                editor.delete("1.0", tk.END)
-                editor.insert("1.0", next_text.rstrip('\n'))  # Remove extra newlines
-                
-                # Free the memory used by the C function
-                backend.lib.free_mem(result_ptr)
-                
-                self.status_var.set("Redo successful.")
-            except Exception as e:
-                print(f"Redo Error: {e}")
+        if backend.lib.perform_redo(current, buffer):
+            editor.delete("1.0", tk.END)
+            editor.insert("1.0", buffer.value.decode())
+            editor.mark_set("insert", "end-1c")
+            self.status_var.set("Redo")
         else:
-            self.status_var.set("Nothing to redo.")
+            self.status_var.set("Nothing to redo")
+
         return "break"
 
 

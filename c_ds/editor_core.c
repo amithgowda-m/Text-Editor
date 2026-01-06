@@ -1,12 +1,25 @@
-#include <stdlib.h>
-#include <string.h>
 #include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
 #include <ctype.h>
 
-#define MAX_HISTORY 200 // Number of undo stack states
+#define MAX_HISTORY 500
+#define MAX_TEXT 5000
 #define ALPHABET_SIZE 26
 #define MAX_WORD_LEN 64
 #define MAX_SUGGESTIONS 5
+
+/* ================= STACK ================= */
+
+typedef struct {
+    char data[MAX_HISTORY][MAX_TEXT];
+    int top;
+} Stack;
+
+static Stack undoStack;
+static Stack redoStack;
+
+/* ================= TRIE ================= */
 
 typedef struct TrieNode {
     struct TrieNode* children[ALPHABET_SIZE];
@@ -15,252 +28,164 @@ typedef struct TrieNode {
 
 static TrieNode* root = NULL;
 
+/* ================= STACK OPS ================= */
 
-typedef struct {
-    char* data[MAX_HISTORY];
-    int top;
-} Stack;
-
-static Stack undoStack;
-static Stack redoStack;
-
-
-void initStack(Stack* s) {
+void stack_init(Stack* s) {
     s->top = -1;
-    for(int i = 0; i < MAX_HISTORY; i++) s->data[i] = NULL;
 }
 
-void clearStack(Stack* s) {
-    while(s->top >= 0) {
-        if (s->data[s->top]) free(s->data[s->top]);
-        s->top--;
-    }
+void stack_clear(Stack* s) {
+    s->top = -1;
 }
 
-void push(Stack* s, const char* text) {
+void stack_push(Stack* s, const char* text) {
+    if (!text) return;
+
     if (s->top < MAX_HISTORY - 1) {
         s->top++;
-        s->data[s->top] = (char*)malloc(strlen(text) + 1);
-        if(s->data[s->top])
-            strcpy(s->data[s->top], text);
+    } else {
+        // shift left (discard oldest)
+        for (int i = 1; i < MAX_HISTORY; i++)
+            strcpy(s->data[i - 1], s->data[i]);
     }
+    strncpy(s->data[s->top], text, MAX_TEXT - 1);
+    s->data[s->top][MAX_TEXT - 1] = '\0';
 }
 
-char* pop(Stack* s) {
-    if (s->top >= 0) {
-        char* text = s->data[s->top];
-        s->top--;
-        return text;
-    }
-    return NULL;
+int stack_pop(Stack* s, char* out) {
+    if (s->top < 0) return 0;
+    strcpy(out, s->data[s->top--]);
+    return 1;
 }
 
+int stack_peek(Stack* s, char* out) {
+    if (s->top < 0) return 0;
+    strcpy(out, s->data[s->top]);
+    return 1;
+}
 
-// Trie Operations
-TrieNode* create_node() {
-    TrieNode* node = (TrieNode*)calloc(1, sizeof(TrieNode));
-    node->is_end = 0;
-    return node;
+/* ================= TRIE OPS ================= */
+
+TrieNode* trie_node() {
+    return (TrieNode*)calloc(1, sizeof(TrieNode));
 }
 
 void trie_init() {
-    root = create_node();
+    root = trie_node();
 }
 
 void trie_insert(const char* word) {
-    TrieNode* curr = root;
+    TrieNode* cur = root;
     for (int i = 0; word[i]; i++) {
         char c = tolower(word[i]);
         if (c < 'a' || c > 'z') return;
-
         int idx = c - 'a';
-        if (!curr->children[idx])
-            curr->children[idx] = create_node();
-
-        curr = curr->children[idx];
+        if (!cur->children[idx])
+            cur->children[idx] = trie_node();
+        cur = cur->children[idx];
     }
-    curr->is_end = 1;
-}
-
-void read_and_insert_into_trie(const char *filename) {
-    FILE *file = fopen(filename, "r");
-    if (file == NULL) {
-        perror("Could not open file");
-        return;
-    }
-
-    char word[MAX_WORD_LEN];
-    while (fgets(word, sizeof(word), file)) {
-        // Remove the newline character at the end of the word, if any
-        word[strcspn(word, "\n")] = '\0';
-        trie_insert(word);  
-    }
-
-    fclose(file);
-}
-
-void displayWordsHelper(TrieNode* node, char* str, int level, int* count, int n) {
-    // If the node is NULL, return
-    if (node == NULL) {
-        return;
-    }
-
-    // If this node marks the end of a word, print the word
-    if (node->is_end) {
-        str[level] = '\0';
-        printf("%s\n", str);
-        (*count)++;
-        if (*count >= n) {
-            return;  // Stop if we've displayed n words
-        }
-    }
-
-    // Recur for all the children
-    for (int i = 0; i < ALPHABET_SIZE; i++) {
-        if (node->children[i] != NULL) {
-            str[level] = i + 'a';  // Convert index to character
-            displayWordsHelper(node->children[i], str, level + 1, count, n);
-            if (*count >= n) {
-                return;  // Stop further recursion if n words are printed
-            }
-        }
-    }
-}
-
-// Function to display first n words in the Trie
-void displayWords(TrieNode* root, int n) {
-    char str[MAX_WORD_LEN];  
-    int count = 0;
-    displayWordsHelper(root, str, 0, &count, n);
+    cur->is_end = 1;
 }
 
 void dfs_collect(
     TrieNode* node,
     char* buffer,
     int depth,
-    char suggestions[MAX_SUGGESTIONS][MAX_WORD_LEN],
+    char out[MAX_SUGGESTIONS][MAX_WORD_LEN],
     int* count
 ) {
-    if (*count >= MAX_SUGGESTIONS) return;
+    if (!node || *count >= MAX_SUGGESTIONS) return;
 
     if (node->is_end) {
         buffer[depth] = '\0';
-        strcpy(suggestions[*count], buffer);
-        (*count)++;
+        strcpy(out[(*count)++], buffer);
     }
 
     for (int i = 0; i < ALPHABET_SIZE; i++) {
         if (node->children[i]) {
             buffer[depth] = 'a' + i;
-            dfs_collect(node->children[i], buffer, depth + 1, suggestions, count);
+            dfs_collect(node->children[i], buffer, depth + 1, out, count);
         }
     }
 }
 
+/* ================= EXPORTS ================= */
 
 #ifdef _WIN32
 #define EXPORT __declspec(dllexport)
-#elif __APPLE__
-#define EXPORT __attribute__((visibility("default")))
-#elif __linux__
-#define EXPORT __attribute__((visibility("default")))
 #else
 #define EXPORT
 #endif
 
 EXPORT void init() {
-    initStack(&undoStack);
-    initStack(&redoStack);
+    stack_init(&undoStack);
+    stack_init(&redoStack);
     trie_init();
 
-    // minimal dictionary (can be expanded / loaded from file)
-    // Revert this, load the words from words.txt
     const char* words[] = {
         "the","this","that","there","their","text","editor",
-        "research","undo","redo","file","save","open","python","program"
+        "research","undo","redo","file","save","open","python"
     };
 
     for (int i = 0; i < 14; i++)
         trie_insert(words[i]);
-    displayWords(root, 14);
 }
 
-
-EXPORT void push_undo_state(const char* text) {
-    if (!text) return;
-    push(&undoStack, text);
-    
-    clearStack(&redoStack); 
-}
-
-EXPORT char* perform_undo(const char* current_text) {
-    if (undoStack.top <= 0) return NULL;
-
-    char* current = pop(&undoStack);
-    push(&redoStack, current);
-    free(current);
-
-    return strdup(undoStack.data[undoStack.top]);
-}
-
-
-EXPORT char* perform_redo(const char* current_text) {
-    if (redoStack.top <= 0) return NULL;
-
-    char* current = pop(&redoStack);
-    push(&undoStack, current);
-    free(current);
-
-    return strdup(redoStack.data[redoStack.top]);
+EXPORT void free_mem(void* ptr) {
+    /* no-op: retained for ABI compatibility */
+    (void)ptr;
 }
 
 EXPORT void save_file(const char* filename, const char* text) {
     if (!filename || !text) return;
+
     FILE* f = fopen(filename, "w");
-    if (f) {
-        fprintf(f, "%s", text);
-        fclose(f);
-    }
+    if (!f) return;
+
+    fputs(text, f);
+    fclose(f);
 }
 
-EXPORT void free_mem(char* ptr) {
-    if (ptr) free(ptr);
+EXPORT void push_undo_state(const char* text) {
+    stack_push(&undoStack, text);
+    stack_clear(&redoStack);
+    printf("UNDO TOP: %d\n", undoStack.top);
+    printf("undo stack data: %s", undoStack.data[undoStack.top]);
+}
+
+EXPORT int perform_undo(const char* current, char* out) {
+    if (undoStack.top <= 0) return 0;
+
+    stack_push(&redoStack, current);
+    undoStack.top--;
+    return stack_peek(&undoStack, out);
+}
+
+EXPORT int perform_redo(const char* current, char* out) {
+    if (redoStack.top < 0) return 0;
+
+    stack_push(&undoStack, current);
+    return stack_pop(&redoStack, out);
 }
 
 EXPORT int autocomplete(
     const char* prefix,
     char suggestions[MAX_SUGGESTIONS][MAX_WORD_LEN]
 ) {
-    if (!root) {
-        fprintf(stderr, "FATAL: trie not initialized\n");
-        fflush(stderr);
-    }
-
-    printf("C Autocomplete function entered\n");
-    fflush(stdout);
-    if (!prefix || prefix[0] == '\0') return 0;
-
-    TrieNode* curr = root;
+    TrieNode* cur = root;
     char buffer[MAX_WORD_LEN];
     int depth = 0;
 
-    // Traverse using lowercase for matching
     for (int i = 0; prefix[i]; i++) {
-        if (depth >= MAX_WORD_LEN - 1) return 0;
         char c = tolower(prefix[i]);
-        if (c < 'a' || c > 'z') return 0;  // Reject non-alphabetic 
-
+        if (c < 'a' || c > 'z') return 0;
         int idx = c - 'a';
-        if (!curr->children[idx]) return 0;
-
-        // Store the ORIGINAL character (with case) in buffer for later reconstruction
+        if (!cur->children[idx]) return 0;
         buffer[depth++] = prefix[i];
-        curr = curr->children[idx];
+        cur = cur->children[idx];
     }
-    printf("Autocomplete has traversed the trie\n");
-    fflush(stdout);
-    int count = 0;
-    dfs_collect(curr, buffer, depth, suggestions, &count);
 
+    int count = 0;
+    dfs_collect(cur, buffer, depth, suggestions, &count);
     return count;
 }
